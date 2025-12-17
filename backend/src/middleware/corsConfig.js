@@ -9,7 +9,7 @@ const allowedOrigins = [
   'https://whiteee-starrr.vercel.app',
   'https://whiteee-starrr.vercel.app', // URL de producción actual
   'https://white-starrrr-ced3mh8oh-sebastaanas-projects.vercel.app',
-  'https://star-white.vercel.app/',
+  'https://star-white.vercel.app',
   process.env.FRONTEND_URL
 ].filter(Boolean); // Eliminar valores undefined
 
