@@ -2,13 +2,6 @@
 const allowedOrigins = [
   'http://localhost:5173',
   'http://localhost:3000',
-  'https://whitesstar.vercel.app',
-  'https://whitestar-six.vercel.app',
-  'https://white-starsas.vercel.app',
-  'https://white-starrrr.vercel.app',
-  'https://whiteee-starrr.vercel.app',
-  'https://whiteee-starrr.vercel.app', // URL de producción actual
-  'https://white-starrrr-ced3mh8oh-sebastaanas-projects.vercel.app',
   'https://star-white.vercel.app',
   process.env.FRONTEND_URL
 ].filter(Boolean); // Eliminar valores undefined
