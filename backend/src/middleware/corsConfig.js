@@ -3,6 +3,7 @@ const allowedOrigins = [
   'http://localhost:5173',
   'http://localhost:3000',
   'https://star-white-raaub5rjy-sebastaanas-projects.vercel.app',
+  'https://star-white.vercel.app',
   process.env.FRONTEND_URL
 ].filter(Boolean); // Eliminar valores undefined
 
