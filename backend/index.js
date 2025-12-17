@@ -32,8 +32,8 @@ const startServer = async () => {
     await autoSeedDatabase();
 
     // 4. Iniciar servidor
-    app.listen(PORT, () => {
-      console.log(`✓ Servidor ejecutándose en http://localhost:${PORT}`);
+    app.listen(PORT, '0.0.0.0', () => {
+      console.log(`✓ Servidor ejecutándose en puerto ${PORT}`);
     });
   } catch (err) {
     console.error('✗ Error:', err);
