@@ -1,0 +1,532 @@
+import { Order, OrderItem, Product, User, Reservation, StockMovement, Complaint, Category } from '../models/index.js';
+import { Op, fn, col, literal } from 'sequelize';
+
+/**
+ * Get comprehensive sales report
+ */
+export const getSalesReport = async (req, res) => {
+    try {
+        const { start_date, end_date, group_by = 'day' } = req.query;
+
+        const dateFilter = {};
+        if (start_date) dateFilter[Op.gte] = new Date(start_date);
+        if (end_date) dateFilter[Op.lte] = new Date(end_date);
+
+        // Total sales
+        const totalSales = await Order.findAll({
+            where: start_date || end_date ? { created_at: dateFilter } : {},
+            attributes: [
+                [fn('COUNT', col('id')), 'total_orders'],
+                [fn('SUM', col('total')), 'total_revenue'],
+                [fn('AVG', col('total')), 'average_order_value']
+            ],
+            raw: true
+        });
+
+        // Sales by status
+        const salesByStatus = await Order.findAll({
+            where: start_date || end_date ? { created_at: dateFilter } : {},
+            attributes: [
+                'status',
+                [fn('COUNT', col('id')), 'count'],
+                [fn('SUM', col('total')), 'revenue']
+            ],
+            group: ['status'],
+            raw: true
+        });
+
+        // Sales over time
+        let dateFormat;
+        switch (group_by) {
+            case 'hour':
+                dateFormat = '%Y-%m-%d %H:00:00';
+                break;
+            case 'day':
+                dateFormat = '%Y-%m-%d';
+                break;
+            case 'week':
+                dateFormat = '%Y-%u';
+                break;
+            case 'month':
+                dateFormat = '%Y-%m';
+                break;
+            default:
+                dateFormat = '%Y-%m-%d';
+        }
+
+        const salesOverTime = await Order.findAll({
+            where: start_date || end_date ? { created_at: dateFilter } : {},
+            attributes: [
+                [fn('DATE_FORMAT', col('created_at'), dateFormat), 'period'],
+                [fn('COUNT', col('id')), 'orders'],
+                [fn('SUM', col('total')), 'revenue']
+            ],
+            group: [literal('period')],
+            order: [[literal('period'), 'ASC']],
+            raw: true
+        });
+
+        // Top selling products
+        const topProducts = await OrderItem.findAll({
+            where: start_date || end_date ? { created_at: dateFilter } : {},
+            attributes: [
+                'product_id',
+                [fn('SUM', col('quantity')), 'total_quantity'],
+                [fn('SUM', literal('quantity * OrderItem.price')), 'total_revenue']
+            ],
+            include: [{
+                model: Product,
+                attributes: ['name', 'price', 'image_url']
+            }],
+            group: ['product_id', 'Product.id'],
+            order: [[fn('SUM', col('quantity')), 'DESC']],
+            limit: 10
+        });
+
+        // Sales by category
+        let salesByCategory = [];
+        try {
+            salesByCategory = await OrderItem.findAll({
+                where: start_date || end_date ? { created_at: dateFilter } : {},
+                attributes: [
+                    [fn('SUM', col('quantity')), 'total_quantity'],
+                    [fn('SUM', literal('quantity * OrderItem.price')), 'total_revenue']
+                ],
+                include: [{
+                    model: Product,
+                    attributes: [],
+                    include: [{
+                        model: Category,
+                        attributes: ['name']
+                    }]
+                }],
+                group: [col('Product->Category.id'), col('Product->Category.name')],
+                raw: true
+            });
+        } catch (err) {
+            console.error('Error getting sales by category:', err);
+        }
+
+        // Payment status breakdown
+        const paymentStatus = await Order.findAll({
+            where: start_date || end_date ? { created_at: dateFilter } : {},
+            attributes: [
+                'payment_status',
+                [fn('COUNT', col('id')), 'count'],
+                [fn('SUM', col('total')), 'amount']
+            ],
+            group: ['payment_status'],
+            raw: true
+        });
+
+        res.json({
+            success: true,
+            data: {
+                summary: totalSales[0],
+                sales_by_status: salesByStatus,
+                sales_over_time: salesOverTime,
+                top_products: topProducts,
+                sales_by_category: salesByCategory,
+                payment_status: paymentStatus,
+                period: {
+                    start: start_date || 'All time',
+                    end: end_date || 'Now',
+                    group_by
+                }
+            }
+        });
+    } catch (error) {
+        console.error('Error generating sales report:', error);
+        import('fs').then(fs => {
+            fs.appendFileSync('backend_error.log', `${new Date().toISOString()} - Sales Report Error: ${error.message}\n${error.stack}\n\n`);
+        });
+        res.status(500).json({
+            success: false,
+            message: 'Error al generar reporte de ventas',
+            error: error.message
+        });
+    }
+};
+
+/**
+ * Get performance report (staff metrics)
+ */
+export const getPerformanceReport = async (req, res) => {
+    try {
+        const { start_date, end_date } = req.query;
+
+        const dateFilter = {};
+        if (start_date) dateFilter[Op.gte] = new Date(start_date);
+        if (end_date) dateFilter[Op.lte] = new Date(end_date);
+
+        // Sales by vendor
+        const salesByVendor = await Order.findAll({
+            attributes: [
+                [fn('COUNT', col('Order.id')), 'total_orders'],
+                [fn('SUM', col('Order.total')), 'total_revenue']
+            ],
+            include: [{
+                model: User,
+                attributes: ['id', 'first_name', 'last_name', 'email'],
+                required: true
+            }],
+            where: start_date || end_date ? { created_at: dateFilter } : {},
+            group: ['User.id'],
+            order: [[fn('SUM', col('Order.total')), 'DESC']]
+        });
+
+        // Reservations handled
+        const reservationsHandled = await Reservation.findAll({
+            attributes: [
+                [fn('COUNT', col('id')), 'total_reservations'],
+                'status'
+            ],
+            include: [{
+                model: User,
+                as: 'confirmer',
+                attributes: ['id', 'first_name', 'last_name'],
+                required: false
+            }],
+            where: {
+                confirmed_by: { [Op.ne]: null },
+                ...(start_date || end_date ? { confirmed_at: dateFilter } : {})
+            },
+            group: [col('confirmed_by'), col('status'), col('confirmer.id')]
+        });
+
+        // Complaints resolved
+        const complaintsResolved = await Complaint.findAll({
+            attributes: [
+                [fn('COUNT', col('id')), 'total_resolved'],
+                [fn('AVG', literal('TIMESTAMPDIFF(HOUR, Complaint.created_at, Complaint.resolved_at)')), 'avg_resolution_time']
+            ],
+            include: [{
+                model: User,
+                as: 'assignee',
+                attributes: ['id', 'first_name', 'last_name'],
+                required: false
+            }],
+            where: {
+                status: 'Resuelto',
+                ...(start_date || end_date ? { resolved_at: dateFilter } : {})
+            },
+            group: [col('assigned_to'), col('assignee.id')]
+        });
+
+        // Stock movements by staff
+        const stockMovements = await StockMovement.findAll({
+            attributes: [
+                'movement_type',
+                [fn('COUNT', col('id')), 'total_movements'],
+                [fn('SUM', col('quantity')), 'total_quantity']
+            ],
+            include: [{
+                model: User,
+                as: 'performer',
+                attributes: ['id', 'first_name', 'last_name'],
+                required: true
+            }],
+            where: start_date || end_date ? { created_at: dateFilter } : {},
+            group: [col('performed_by'), col('movement_type'), col('performer.id')]
+        });
+
+        res.json({
+            success: true,
+            data: {
+                sales_performance: salesByVendor,
+                reservations_handled: reservationsHandled,
+                complaints_resolved: complaintsResolved,
+                stock_movements: stockMovements,
+                period: {
+                    * Get inventory report
+ */
+export const getInventoryReport = async (req, res) => {
+                    try {
+                        const { low_stock_only, category_id } = req.query;
+
+                        const where = {};
+                        if (category_id) where.category_id = category_id;
+
+                        const products = await Product.findAll({
+                            where,
+                            attributes: [
+                                'id',
+                                'name',
+                                'stock',
+                                'reserved_stock',
+                                'low_stock_threshold',
+                                'price',
+                                [literal('stock - reserved_stock'), 'available_stock'],
+                                [literal('stock * price'), 'stock_value']
+                            ],
+                            include: [{
+                                model: Category,
+                                attributes: ['name']
+                            }],
+                            order: [['stock', 'ASC']]
+                        });
+
+                        const report = products.map(product => {
+                            const data = product.get({ plain: true });
+                            const availableStock = data.stock - data.reserved_stock;
+                            const isLowStock = data.stock <= data.low_stock_threshold;
+                            const stockStatus = isLowStock ? 'Bajo' : data.stock === 0 ? 'Agotado' : 'Normal';
+
+                            return {
+                                ...data,
+                                available_stock: availableStock,
+                                is_low_stock: isLowStock,
+                                stock_status: stockStatus,
+                                stock_percentage: data.low_stock_threshold > 0
+                                    ? Math.round((data.stock / data.low_stock_threshold) * 100)
+                                    : 100
+                            };
+                        });
+
+                        const filteredReport = low_stock_only === 'true'
+                            ? report.filter(item => item.is_low_stock)
+                            : report;
+
+                        // Summary statistics
+                        const summary = {
+                            total_products: filteredReport.length,
+                            total_stock_units: filteredReport.reduce((sum, item) => sum + item.stock, 0),
+                            total_stock_value: filteredReport.reduce((sum, item) => sum + parseFloat(item.stock_value), 0),
+                            low_stock_products: filteredReport.filter(item => item.is_low_stock).length,
+                            out_of_stock_products: filteredReport.filter(item => item.stock === 0).length,
+                            total_reserved: filteredReport.reduce((sum, item) => sum + item.reserved_stock, 0),
+                            average_stock_value: filteredReport.length > 0
+                                ? filteredReport.reduce((sum, item) => sum + parseFloat(item.stock_value), 0) / filteredReport.length
+                                : 0
+                        };
+
+                        // Stock by category
+                        const stockByCategory = {};
+                        filteredReport.forEach(item => {
+                            const category = item.Category?.name || 'Sin categoría';
+                            if (!stockByCategory[category]) {
+                                stockByCategory[category] = {
+                                    category,
+                                    products: 0,
+                                    total_stock: 0,
+                                    total_value: 0
+                                };
+                            }
+                            stockByCategory[category].products++;
+                            stockByCategory[category].total_stock += item.stock;
+                            stockByCategory[category].total_value += parseFloat(item.stock_value);
+                        });
+
+                        res.json({
+                            success: true,
+                            data: {
+                                products: filteredReport,
+                                summary,
+                                by_category: Object.values(stockByCategory)
+                            }
+                        });
+                    } catch (error) {
+                        console.error('Error generating inventory report:', error);
+                        res.status(500).json({
+                            success: false,
+                            message: 'Error al generar reporte de inventario',
+                            error: error.message
+                        });
+                    }
+                };
+
+                /**
+                 * Get customer analytics report
+                 */
+                export const getCustomerReport = async (req, res) => {
+                    try {
+                        const { start_date, end_date } = req.query;
+
+                        const dateFilter = {};
+                        if (start_date) dateFilter[Op.gte] = new Date(start_date);
+                        if (end_date) dateFilter[Op.lte] = new Date(end_date);
+
+                        // Top customers by revenue
+                        const topCustomers = await Order.findAll({
+                            attributes: [
+                                [fn('COUNT', col('Order.id')), 'total_orders'],
+                                [fn('SUM', col('Order.total')), 'total_spent'],
+                                [fn('AVG', col('Order.total')), 'average_order']
+                            ],
+                            include: [{
+                                model: User,
+                                attributes: ['id', 'first_name', 'last_name', 'email'],
+                                required: true
+                            }],
+                            where: start_date || end_date ? { created_at: dateFilter } : {},
+                            group: ['User.id'],
+                            order: [[fn('SUM', col('Order.total')), 'DESC']],
+                            limit: 20
+                        });
+
+                        // Customer acquisition over time
+                        const newCustomers = await User.findAll({
+                            attributes: [
+                                [fn('DATE_FORMAT', col('created_at'), '%Y-%m'), 'month'],
+                                [fn('COUNT', col('id')), 'new_customers']
+                            ],
+                            where: {
+                                role_id: { [Op.ne]: null },
+                                ...(start_date || end_date ? { created_at: dateFilter } : {})
+                            },
+                            group: [literal('month')],
+                            order: [[literal('month'), 'ASC']],
+                            raw: true
+                        });
+
+                        // Customer retention (repeat customers)
+                        const repeatCustomers = await Order.findAll({
+                            attributes: [
+                                'user_id',
+                                [fn('COUNT', col('id')), 'order_count']
+                            ],
+                            where: start_date || end_date ? { created_at: dateFilter } : {},
+                            group: ['user_id'],
+                            having: literal('order_count > 1'),
+                            raw: true
+                        });
+
+                        // Complaints by customer
+                        const complaintsStats = await Complaint.findAll({
+                            attributes: [
+                                'status',
+                                'priority',
+                                [fn('COUNT', col('id')), 'count']
+                            ],
+                            where: start_date || end_date ? { created_at: dateFilter } : {},
+                            group: ['status', 'priority'],
+                            raw: true
+                        });
+
+                        res.json({
+                            success: true,
+                            data: {
+                                top_customers: topCustomers,
+                                new_customers_trend: newCustomers,
+                                repeat_customers_count: repeatCustomers.length,
+                                complaints_statistics: complaintsStats,
+                                period: {
+                                    start: start_date || 'All time',
+                                    end: end_date || 'Now'
+                                }
+                            }
+                        });
+                    } catch (error) {
+                        console.error('Error generating customer report:', error);
+                        res.status(500).json({
+                            success: false,
+                            message: 'Error al generar reporte de clientes',
+                            error: error.message
+                        });
+                    }
+                };
+
+                /**
+                 * Get dashboard summary (KPIs)
+                 */
+                export const getDashboardSummary = async (req, res) => {
+                    try {
+                        const today = new Date();
+                        const lastMonth = new Date(today.getFullYear(), today.getMonth() - 1, today.getDate());
+                        const lastWeek = new Date(today.getTime() - 7 * 24 * 60 * 60 * 1000);
+
+                        // Today's sales
+                        const todaySales = await Order.sum('total', {
+                            where: {
+                                created_at: {
+                                    [Op.gte]: new Date(today.setHours(0, 0, 0, 0))
+                                }
+                            }
+                        });
+
+                        // This month's sales
+                        const monthSales = await Order.sum('total', {
+                            where: {
+                                created_at: { [Op.gte]: lastMonth }
+                            }
+                        });
+
+                        // Active reservations
+                        const activeReservations = await Reservation.count({
+                            where: {
+                                status: { [Op.in]: ['Pendiente', 'Confirmada'] }
+                            }
+                        });
+
+                        // Low stock alerts
+                        const lowStockCount = await Product.count({
+                            where: literal('stock <= low_stock_threshold')
+                        });
+
+                        // Pending complaints
+                        const pendingComplaints = await Complaint.count({
+                            where: {
+                                status: { [Op.in]: ['Abierto', 'En Proceso'] }
+                            }
+                        });
+
+                        // Recent orders
+                        const recentOrders = await Order.count({
+                            where: {
+                                created_at: { [Op.gte]: lastWeek }
+                            }
+                        });
+
+                        // Total customers
+                        const totalCustomers = await User.count();
+
+                        // Revenue trend (last 7 days)
+                        const revenueTrend = await Order.findAll({
+                            attributes: [
+                                [fn('DATE', col('created_at')), 'date'],
+                                [fn('SUM', col('total')), 'revenue'],
+                                [fn('COUNT', col('id')), 'orders']
+                            ],
+                            where: {
+                                created_at: { [Op.gte]: lastWeek }
+                            },
+                            group: [fn('DATE', col('created_at'))],
+                            order: [[fn('DATE', col('created_at')), 'ASC']],
+                            raw: true
+                        });
+
+                        res.json({
+                            success: true,
+                            data: {
+                                kpis: {
+                                    today_sales: todaySales || 0,
+                                    month_sales: monthSales || 0,
+                                    active_reservations: activeReservations,
+                                    low_stock_alerts: lowStockCount,
+                                    pending_complaints: pendingComplaints,
+                                    recent_orders: recentOrders,
+                                    total_customers: totalCustomers
+                                },
+                                revenue_trend: revenueTrend
+                            }
+                        });
+                    } catch (error) {
+                        console.error('Error generating dashboard summary:', error);
+                        res.status(500).json({
+                            success: false,
+                            message: 'Error al generar resumen del dashboard',
+                            error: error.message
+                        });
+                    }
+                };
+
+                export default {
+                    getSalesReport,
+                    getPerformanceReport,
+                    getInventoryReport,
+                    getCustomerReport,
+                    getDashboardSummary
+                };
+
+ 
+ 

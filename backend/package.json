@@ -1,0 +1,56 @@
+{
+  "name": "whitestar-backend",
+  "version": "1.0.0",
+  "description": "WhiteStar Backend API - TRL-5 E-commerce",
+  "main": "index.js",
+  "type": "module",
+  "scripts": {
+    "dev": "nodemon --exec node ./index.js",
+    "start": "node ./index.js",
+    "migrate": "node ./migrate.js",
+    "seed": "node ./seed.js",
+    "create-admin": "node ./create_admin.js",
+    "seed-users": "node ./seed_users.js",
+    "init-prod": "node ./init-production.js",
+    "lint": "eslint src/",
+    "echo": "echo OK"
+  },
+  "keywords": [
+    "ecommerce",
+    "trl5",
+    "whitestar"
+  ],
+  "author": "Full-Stack Team",
+  "license": "MIT",
+  "dependencies": {
+    "@faker-js/faker": "^10.1.0",
+    "axios": "^1.13.2",
+    "bcryptjs": "^3.0.3",
+    "compression": "^1.8.1",
+    "cookie-parser": "^1.4.7",
+    "cors": "^2.8.5",
+    "csurf": "^1.11.0",
+    "dotenv": "^16.6.1",
+    "express": "^4.21.2",
+    "express-mongo-sanitize": "^2.2.0",
+    "express-rate-limit": "^8.2.1",
+    "express-validator": "^7.3.1",
+    "helmet": "^8.1.0",
+    "hpp": "^0.2.3",
+    "jsonwebtoken": "^9.0.2",
+    "multer": "^2.0.2",
+    "mysql2": "^3.15.3",
+    "nodemailer": "^6.9.8",
+    "pdfkit": "^0.15.0",
+    "qrcode": "^1.5.4",
+    "sequelize": "^6.37.7",
+    "xss-clean": "^0.1.4"
+  },
+  "devDependencies": {
+    "eslint": "^8.57.1",
+    "nodemon": "^3.1.10"
+  },
+  "engines": {
+    "node": ">=20.0.0"
+  }
+}
